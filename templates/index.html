@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>自販機アプリ</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+  <div class="container">
+
+    <div class="items">
+      {% for item in items %}
+      <div class="item {% if item['在庫'] == 0 %}soldout{% endif %}" 
+           onclick="openDialog('{{ item['商品名'] }}', {{ item['価格'] }}, '{{ item['画像URL'] }}', {{ item['在庫'] }})">
+        <img src="{{ item['画像URL'] }}" alt="{{ item['商品名'] }}">
+        <div class="info">
+          <h3>{{ item['商品名'] }}</h3>
+          <p>{{ item['価格'] }}円</p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- 購入ポップアップ -->
+  <div id="dialog" class="dialog hidden">
+    <div class="dialog-content">
+      <img id="dialog-img">
+      <h2 id="dialog-name"></h2>
+      <p id="dialog-price"></p>
+      <button onclick="confirmBuy()">購入</button>
+      <button onclick="closeDialog()">キャンセル</button>
+    </div>
+  </div>
+
+  <script>
+    let selectedItem = null;
+    let userId = null;
+
+    // LIFF初期化
+    async function initLiff() {
+      await liff.init({ liffId: "2008445899-zO6NQJ5P" });
+      if (liff.isInClient()) {
+        const profile = await liff.getProfile();
+        userId = profile.userId;
+      } else {
+        document.body.innerHTML = "<h2>LINEアプリ内で開いてください</h2>";
+      }
+    }
+    initLiff();
+
+    function openDialog(name, price, img, stock) {
+      if (stock === 0) return alert("売り切れ");
+      selectedItem = { name, price };
+      document.getElementById("dialog-img").src = img;
+      document.getElementById("dialog-name").innerText = name;
+      document.getElementById("dialog-price").innerText = price + "円";
+      document.getElementById("dialog").classList.remove("hidden");
+    }
+
+    function closeDialog() {
+      document.getElementById("dialog").classList.add("hidden");
+    }
+
+    async function confirmBuy() {
+      const res = await fetch("/buy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_name: selectedItem.name, user_id: userId })
+      });
+      const result = await res.json();
+      alert(result.message);
+      closeDialog();
+      if (result.status === "ok") location.reload();
+    }
+  </script>
+</body>
+</html>
