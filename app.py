@@ -6,12 +6,12 @@ import paho.mqtt.publish as publish
 
 app = Flask(__name__)
 
-# MQTT
+# MQTT 設定
 MQTT_HOST = os.getenv("MQTT_HOST","broker.hivemq.com")
 MQTT_TOPIC = os.getenv("MQTT_TOPIC","m5stack/test")
 MQTT_PORT = int(os.getenv("MQTT_PORT",1883))
 
-# Google スプレッドシート
+# Google スプレッドシート接続
 scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
 creds_json = os.getenv("GOOGLE_CREDENTIALS")
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), scope)
@@ -31,31 +31,24 @@ COL_STOCK = get_col_index(sheet_stock, "在庫")
 COL_PRICE = get_col_index(sheet_stock, "価格")
 
 # ==========================
-# LIFF 初回アクセス画面
+# LIFF 登録画面
 # ==========================
 @app.route("/liff")
 def liff_entry():
-    return render_template("check.html")
+    return render_template("register.html")
 
-# ==========================
-# 利用者判定
-# ==========================
 @app.route("/check_user", methods=["POST"])
 def check_user():
     data = request.json
     line_user_id = data.get("userId")
     if not line_user_id:
         return jsonify({"status":"error","message":"LINE ID が取得できません"})
-
     all_users = sheet_users.get_all_records()
     for u in all_users:
         if str(u["ID"]).strip() == line_user_id:
             return jsonify({"status":"ok","registered":True,"name":u["氏名"]})
     return jsonify({"status":"ok","registered":False})
 
-# ==========================
-# 会員登録
-# ==========================
 @app.route("/register", methods=["POST"])
 def register():
     data = request.json
@@ -63,15 +56,12 @@ def register():
     student_id = data.get("student_id")
     grade = data.get("grade")
     line_user_id = data.get("userId")
-
     if not all([name, student_id, grade, line_user_id]):
         return jsonify({"status":"error","message":"入力が不完全です"})
-
     all_users = sheet_users.get_all_records()
     for u in all_users:
         if str(u["ID"]).strip() == line_user_id:
             return jsonify({"status":"error","message":"すでに登録済みです"})
-
     sheet_users.append_row([name, student_id, grade, line_user_id])
     return jsonify({"status":"ok","message":f"{name} さんを登録しました"})
 
@@ -83,21 +73,27 @@ def index():
     items = sheet_stock.get_all_records()
     return render_template("index.html", items=items)
 
-# ==========================
-# 購入 API
-# ==========================
 @app.route("/buy", methods=["POST"])
 def buy_item():
     data = request.json
     item_name = data.get("item_name")
     user_id = str(data.get("user_id")).strip()
 
+    # 利用者検索
     users = sheet_users.get_all_records()
-    user_name = "不明"
+    user_name = None
     for u in users:
         if str(u["ID"]).strip() == user_id:
             user_name = u["氏名"]
             break
+
+    if not user_name:
+        # 未登録なら登録画面に誘導
+        return jsonify({
+            "status": "not_registered",
+            "message": "未登録ユーザーです。会員登録してください。",
+            "redirect_url": "/liff"
+        })
 
     all_stock = sheet_stock.get_all_records()
     for i, row in enumerate(all_stock, start=2):
@@ -107,7 +103,7 @@ def buy_item():
             shelf = row.get("棚番号","")
             address = row.get("アドレス","")
 
-            if stock <=0:
+            if stock <= 0:
                 return jsonify({"status":"error","message":"在庫がありません"})
 
             new_stock = stock - 1
@@ -116,20 +112,24 @@ def buy_item():
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             sheet_log.append_row([now, user_name, item_name, price])
 
+            # MQTT送信
             try:
                 publish.single(MQTT_TOPIC, payload=str(shelf)+str(address),
                                hostname=MQTT_HOST, port=MQTT_PORT)
-                mqtt_status="ok"
+                mqtt_status = "ok"
             except Exception as e:
-                mqtt_status=f"error: {str(e)}"
+                mqtt_status = f"error: {str(e)}"
 
-            return jsonify({"status":"ok","message":f"{item_name} を購入しました",
-                            "new_stock":new_stock,"price":price,"mqtt":mqtt_status})
+            return jsonify({
+                "status": "ok",
+                "message": f"{item_name} を購入しました",
+                "new_stock": new_stock,
+                "price": price,
+                "mqtt": mqtt_status
+            })
+
     return jsonify({"status":"error","message":"商品が見つかりません"})
 
-# ==========================
-# 在庫 API
-# ==========================
 @app.route("/stock", methods=["GET"])
 def get_stock():
     data = sheet_stock.get_all_records()
