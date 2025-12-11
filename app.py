@@ -1,20 +1,35 @@
 from flask import Flask, render_template, request, jsonify
-import gspread, os, json
+import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+import os
+import json
+
+# MQTT ---------------------------------------------------------
 import paho.mqtt.publish as publish
+
+MQTT_HOST = "broker.hivemq.com"  # xxxxxx.s1.eu.hivemq.cloud
+MQTT_TOPIC = "m5stack/test"
+MQTT_PORT = 1883
+# --------------------------------------------------------------
 
 app = Flask(__name__)
 
-# MQTT 設定
-MQTT_HOST = os.getenv("MQTT_HOST","broker.hivemq.com")
-MQTT_TOPIC = os.getenv("MQTT_TOPIC","m5stack/test")
-MQTT_PORT = int(os.getenv("MQTT_PORT",1883))
+# ==========================
+# Google スプレッドシート接続（Render 対応）
+# ==========================
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
 
-# Google スプレッドシート接続
-scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
 creds_json = os.getenv("GOOGLE_CREDENTIALS")
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), scope)
+if not creds_json:
+    raise RuntimeError("環境変数 GOOGLE_CREDENTIALS が設定されていません")
+
+credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+    json.loads(creds_json), scope
+)
 gc = gspread.authorize(credentials)
 
 sh = gc.open("自販機管理")
@@ -30,49 +45,19 @@ COL_NAME = get_col_index(sheet_stock, "商品名")
 COL_STOCK = get_col_index(sheet_stock, "在庫")
 COL_PRICE = get_col_index(sheet_stock, "価格")
 
-# ==========================
-# LIFF 登録画面
-# ==========================
-@app.route("/liff")
-def liff_entry():
-    return render_template("register.html")
-
-@app.route("/check_user", methods=["POST"])
-def check_user():
-    data = request.json
-    line_user_id = data.get("userId")
-    if not line_user_id:
-        return jsonify({"status":"error","message":"LINE ID が取得できません"})
-    all_users = sheet_users.get_all_records()
-    for u in all_users:
-        if str(u["ID"]).strip() == line_user_id:
-            return jsonify({"status":"ok","registered":True,"name":u["氏名"]})
-    return jsonify({"status":"ok","registered":False})
-
-@app.route("/register", methods=["POST"])
-def register():
-    data = request.json
-    name = data.get("name")
-    student_id = data.get("student_id")
-    grade = data.get("grade")
-    line_user_id = data.get("userId")
-    if not all([name, student_id, grade, line_user_id]):
-        return jsonify({"status":"error","message":"入力が不完全です"})
-    all_users = sheet_users.get_all_records()
-    for u in all_users:
-        if str(u["ID"]).strip() == line_user_id:
-            return jsonify({"status":"error","message":"すでに登録済みです"})
-    sheet_users.append_row([name, student_id, grade, line_user_id])
-    return jsonify({"status":"ok","message":f"{name} さんを登録しました"})
 
 # ==========================
-# 販売画面
+# index ページ
 # ==========================
 @app.route('/')
 def index():
     items = sheet_stock.get_all_records()
     return render_template("index.html", items=items)
 
+
+# ==========================
+# 購入 API（ここで MQTT 送信！）
+# ==========================
 @app.route("/buy", methods=["POST"])
 def buy_item():
     data = request.json
@@ -81,41 +66,43 @@ def buy_item():
 
     # 利用者検索
     users = sheet_users.get_all_records()
-    user_name = None
+    user_name = "不明"
     for u in users:
         if str(u["ID"]).strip() == user_id:
             user_name = u["氏名"]
             break
 
-    if not user_name:
-        # 未登録なら登録画面に誘導
-        return jsonify({
-            "status": "not_registered",
-            "message": "未登録ユーザーです。会員登録してください。",
-            "redirect_url": "/liff"
-        })
-
+    # 在庫検索
     all_stock = sheet_stock.get_all_records()
+
     for i, row in enumerate(all_stock, start=2):
         if row["商品名"] == item_name:
             stock = row["在庫"]
             price = row["価格"]
-            shelf = row.get("棚番号","")
-            address = row.get("アドレス","")
+            shelf = row["棚番号"]
+            address = row["アドレス"]
 
             if stock <= 0:
-                return jsonify({"status":"error","message":"在庫がありません"})
+                return jsonify({"status": "error", "message": "在庫がありません"})
 
+            # 在庫減らす
             new_stock = stock - 1
             sheet_stock.update_cell(i, COL_STOCK, new_stock)
 
+            # 履歴追加
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             sheet_log.append_row([now, user_name, item_name, price])
 
-            # MQTT送信
+            # ==========================
+            # 🔥 MQTT プッシュ
+            # ==========================
             try:
-                publish.single(MQTT_TOPIC, payload=str(shelf)+str(address),
-                               hostname=MQTT_HOST, port=MQTT_PORT)
+                publish.single(
+                    MQTT_TOPIC,
+                    payload=str(shelf)+str(address),       # ← ESP32 に送る値
+                    hostname=MQTT_HOST,
+                    port=MQTT_PORT,
+                )
                 mqtt_status = "ok"
             except Exception as e:
                 mqtt_status = f"error: {str(e)}"
@@ -128,16 +115,22 @@ def buy_item():
                 "mqtt": mqtt_status
             })
 
-    return jsonify({"status":"error","message":"商品が見つかりません"})
+    return jsonify({"status": "error", "message": "商品が見つかりません"})
 
+
+# ==========================
+# JSON 在庫 API
+# ==========================
 @app.route("/stock", methods=["GET"])
 def get_stock():
     data = sheet_stock.get_all_records()
-    return jsonify({"items":data})
+    return jsonify({"items": data})
+
 
 @app.route("/ping")
 def ping():
     return "ok"
+
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
