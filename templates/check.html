@@ -2,64 +2,59 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>読み込み中</title>
+<title>会員登録 or 販売</title>
 <script src="https://static.line-scdn.net/liff/edge/2.1/sdk.js"></script>
 </head>
 <body>
-<div id="form-area">
-  <h1>読み込み中...</h1>
-</div>
+<div id="form-area">読み込み中...</div>
 
 <script>
 let lineUserId;
 
-async function main(){
-    await liff.init({liffId:"YOUR_LIFF_ID"});
-    const profile = await liff.getProfile();
-    lineUserId = profile.userId;
+async function main() {
+  await liff.init({ liffId: "YOUR_LIFF_ID" });
+  const profile = await liff.getProfile();
+  lineUserId = profile.userId;
 
-    // 利用者判定
-    const res = await fetch("/check_user", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({userId:lineUserId})
-    });
-    const data = await res.json();
-    const div = document.getElementById("form-area");
+  const res = await fetch("/check_user", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({userId: lineUserId})
+  });
+  const data = await res.json();
+  const div = document.getElementById("form-area");
 
-    if(data.registered){
-        // 登録済み → 購入画面へ
-        div.innerHTML=`<p>${data.name} さん、ようこそ！</p><a href="/">購入ページへ</a>`;
-    }else{
-        // 未登録 → 登録フォーム
-        div.innerHTML=`
-            <h1>会員登録</h1>
-            <form id="registerForm">
-                <label>氏名:</label><input type="text" id="name" required><br><br>
-                <label>学籍番号:</label><input type="text" id="student_id" required><br><br>
-                <label>学年:</label><input type="text" id="grade" required><br><br>
-                <button type="submit">登録</button>
-            </form>
-            <p id="result"></p>
-        `;
-        const form = document.getElementById("registerForm");
-        form.addEventListener("submit", async e=>{
-            e.preventDefault();
-            const name=document.getElementById("name").value;
-            const student_id=document.getElementById("student_id").value;
-            const grade=document.getElementById("grade").value;
-            const res = await fetch("/register",{
-                method:"POST",
-                headers:{"Content-Type":"application/json"},
-                body:JSON.stringify({name,student_id,grade,userId:lineUserId})
-            });
-            const result = await res.json();
-            document.getElementById("result").innerText=result.message;
-            if(result.status==="ok"){
-                window.location.href="/";
-            }
-        });
-    }
+  if(data.registered){
+      div.innerHTML = `<p>${data.name} さん、ようこそ！</p><a href="/">購入ページへ</a>`;
+  } else {
+      div.innerHTML = `
+        <h1>会員登録</h1>
+        <form id="registerForm">
+          <label>氏名:</label><input type="text" id="name" required><br>
+          <label>学籍番号:</label><input type="text" id="student_id" required><br>
+          <label>学年:</label><input type="text" id="grade" required><br>
+          <button type="submit">登録</button>
+        </form>
+        <p id="result"></p>
+      `;
+      const form = document.getElementById("registerForm");
+      form.addEventListener("submit", async e => {
+          e.preventDefault();
+          const name = document.getElementById("name").value;
+          const student_id = document.getElementById("student_id").value;
+          const grade = document.getElementById("grade").value;
+          const res = await fetch("/register", {
+              method: "POST",
+              headers: {"Content-Type":"application/json"},
+              body: JSON.stringify({name, student_id, grade, userId: lineUserId})
+          });
+          const result = await res.json();
+          document.getElementById("result").innerText = result.message;
+          if(result.status==="ok"){
+              window.location.href="/"; // 登録完了後、販売画面へ
+          }
+      });
+  }
 }
 
 main();
