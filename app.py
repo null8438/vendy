@@ -79,9 +79,8 @@ def buy_item():
         if row["商品名"] == item_name:
             stock = row["在庫"]
             price = row["価格"]
-
-            # ESP32 のアドレス（商品番号など）
-            address = row["アドレス"]   # ★ ← MQTT で送る値はここ！
+            shelf = row["棚番号"]
+            address = row["アドレス"]
 
             if stock <= 0:
                 return jsonify({"status": "error", "message": "在庫がありません"})
@@ -95,12 +94,12 @@ def buy_item():
             sheet_log.append_row([now, user_name, item_name, price])
 
             # ==========================
-            # 🔥 MQTT プッシュ（超重要）
+            # 🔥 MQTT プッシュ
             # ==========================
             try:
                 publish.single(
                     MQTT_TOPIC,
-                    payload=str(address),       # ← ESP32 に送る値
+                    payload=str(shelf+address),       # ← ESP32 に送る値
                     hostname=MQTT_HOST,
                     port=MQTT_PORT,
                 )
