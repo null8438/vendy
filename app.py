@@ -54,6 +54,51 @@ def index():
     items = sheet_stock.get_all_records()
     return render_template("index.html", items=items)
 
+# ==========================
+# LIFF 起動用ルート（LINE userId で分岐）
+# ==========================
+@app.route("/liff")
+def liff_entry():
+    line_user_id = request.args.get("userId")
+    if not line_user_id:
+        return "LINE ID が取得できません"
+
+    # Googleスプレッドシートに登録済みか確認
+    all_users = sheet_users.get_all_records()
+    for u in all_users:
+        if str(u["ID"]).strip() == line_user_id:
+            # 登録済 → index.html に購入画面を表示
+            return render_template("index.html", user_name=u["氏名"])
+
+    # 未登録 → 会員登録フォームを表示
+    return render_template("register.html", line_user_id=line_user_id)
+
+
+# ==========================
+# 会員登録 POST
+# ==========================
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.json
+    name = data.get("name")
+    student_id = data.get("student_id")
+    grade = data.get("grade")
+    line_user_id = request.headers.get("X-LINE-USER-ID")
+
+    if not all([name, student_id, grade, line_user_id]):
+        return jsonify({"status":"error","message":"入力が不完全です"})
+
+    # 重複チェック
+    all_users = sheet_users.get_all_records()
+    for u in all_users:
+        if str(u["ID"]).strip() == line_user_id:
+            return jsonify({"status":"error","message":"このLINEアカウントはすでに登録済みです"})
+
+    # スプレッドシートに追加（氏名、学籍番号、学年、ID）
+    sheet_users.append_row([name, student_id, grade, line_user_id])
+
+    return jsonify({"status":"ok","message":f"{name} さんを登録しました"})
+
 
 # ==========================
 # 購入 API（ここで MQTT 送信！）
