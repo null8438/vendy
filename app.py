@@ -5,6 +5,14 @@ from datetime import datetime
 import os
 import json
 
+# MQTT ---------------------------------------------------------
+import paho.mqtt.publish as publish
+
+MQTT_HOST = "broker.hivemq.com"  # xxxxxx.s1.eu.hivemq.cloud
+MQTT_TOPIC = "m5stack/test"
+MQTT_PORT = 1883
+# --------------------------------------------------------------
+
 app = Flask(__name__)
 
 # ==========================
@@ -15,7 +23,6 @@ scope = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Render の環境変数 GOOGLE_CREDENTIALS を JSON として読み込む
 creds_json = os.getenv("GOOGLE_CREDENTIALS")
 if not creds_json:
     raise RuntimeError("環境変数 GOOGLE_CREDENTIALS が設定されていません")
@@ -25,16 +32,11 @@ credentials = ServiceAccountCredentials.from_json_keyfile_dict(
 )
 gc = gspread.authorize(credentials)
 
-# シート取得
 sh = gc.open("自販機管理")
 sheet_stock = sh.worksheet("在庫管理")
 sheet_users = sh.worksheet("利用者")
 sheet_log = sh.worksheet("販売履歴")
 
-
-# ==========================
-# ヘッダ行から列番号取得
-# ==========================
 def get_col_index(sheet, column_name):
     header = sheet.row_values(1)
     return header.index(column_name) + 1
@@ -54,7 +56,7 @@ def index():
 
 
 # ==========================
-# 購入 API
+# 購入 API（ここで MQTT 送信！）
 # ==========================
 @app.route("/buy", methods=["POST"])
 def buy_item():
@@ -73,29 +75,45 @@ def buy_item():
     # 在庫検索
     all_stock = sheet_stock.get_all_records()
 
-    for i, row in enumerate(all_stock, start=2):  # データは2行目から
+    for i, row in enumerate(all_stock, start=2):
         if row["商品名"] == item_name:
             stock = row["在庫"]
             price = row["価格"]
-            address = row["アドレス"]
+
+            # ESP32 のアドレス（商品番号など）
+            address = row["アドレス"]   # ★ ← MQTT で送る値はここ！
 
             if stock <= 0:
                 return jsonify({"status": "error", "message": "在庫がありません"})
 
-            # 在庫減算
+            # 在庫減らす
             new_stock = stock - 1
             sheet_stock.update_cell(i, COL_STOCK, new_stock)
 
-
-            # 販売履歴追加
+            # 履歴追加
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             sheet_log.append_row([now, user_name, item_name, price])
+
+            # ==========================
+            # 🔥 MQTT プッシュ（超重要）
+            # ==========================
+            try:
+                publish.single(
+                    MQTT_TOPIC,
+                    payload=str(address),       # ← ESP32 に送る値
+                    hostname=MQTT_HOST,
+                    port=MQTT_PORT,
+                )
+                mqtt_status = "ok"
+            except Exception as e:
+                mqtt_status = f"error: {str(e)}"
 
             return jsonify({
                 "status": "ok",
                 "message": f"{item_name} を購入しました",
                 "new_stock": new_stock,
-                "price": price
+                "price": price,
+                "mqtt": mqtt_status
             })
 
     return jsonify({"status": "error", "message": "商品が見つかりません"})
@@ -110,9 +128,6 @@ def get_stock():
     return jsonify({"items": data})
 
 
-# ==========================
-# Render のヘルスチェック用
-# ==========================
 @app.route("/ping")
 def ping():
     return "ok"
