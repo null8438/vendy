@@ -5,16 +5,6 @@ from datetime import datetime
 import os
 import json
 
-# ==========================
-# MQTT 設定
-# ==========================
-import paho.mqtt.client as mqtt
-BROKER = "broker.hivemq.com"
-PORT = 1883
-TOPIC = "m5stack/test"
-client = mqtt.Client()
-client.connect(BROKER, PORT, 60)
-
 app = Flask(__name__)
 
 # ==========================
@@ -96,9 +86,6 @@ def buy_item():
             new_stock = stock - 1
             sheet_stock.update_cell(i, COL_STOCK, new_stock)
 
-            # MQTT にアドレス送信
-            client.publish(TOPIC, address)
-            print("MQTT → 自販機にアドレス送信:", address)
 
             # 販売履歴追加
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
