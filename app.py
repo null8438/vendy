@@ -14,8 +14,6 @@ PORT = 1883
 TOPIC = "m5stack/test"
 client = mqtt.Client()
 client.connect(BROKER, PORT, 60)
-client.loop_start()    # ← これを追加
-
 
 app = Flask(__name__)
 
