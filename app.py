@@ -99,7 +99,8 @@ def buy_item():
             try:
                 publish.single(
                     MQTT_TOPIC,
-                    payload=str(shelf)+str(address),       # ← ESP32 に送る値
+                    payload=str(address),
+                    #payload=str(shelf)+str(address),       # ← ESP32 に送る値
                     hostname=MQTT_HOST,
                     port=MQTT_PORT,
                 )
